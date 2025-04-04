@@ -5,8 +5,7 @@ This is a simple script to purge files from an FTP server.
 ## Usage
 
 ```bash
-pip install -r requirements.txt
-python purge.py
+docker compose up --build
 ```
 
 ## Environment Variables
