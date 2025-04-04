@@ -11,7 +11,7 @@ This is a simple script to purge files from an FTP server and send a notificatio
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/ftp-purge.git
+git clone https://github.com/pantelx/ftp-purge.git
 cd ftp-purge
 cp .env.example .env
 ```
