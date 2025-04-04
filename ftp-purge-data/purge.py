@@ -2,8 +2,17 @@ import os
 import ftplib
 import datetime
 import requests
+import time
+import logging
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('ftp-purge')
 
 load_dotenv()
 
@@ -18,6 +27,9 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 # Number of days to keep files (delete older files)
 DAYS_TO_KEEP = int(os.getenv("DAYS_TO_KEEP"))
+
+# Sleep time in seconds (24 hours = 86400 seconds)
+SLEEP_TIME = int(os.getenv("SLEEP_TIME"))
 
 def send_discord_notification(deleted_files):
     """Send notification to Discord about deleted files"""
@@ -45,9 +57,9 @@ def send_discord_notification(deleted_files):
     try:
         response = requests.post(DISCORD_WEBHOOK_URL, json=message)
         response.raise_for_status()
-        print(f"Discord notification sent successfully")
+        logger.info("Discord notification sent successfully")
     except Exception as e:
-        print(f"Failed to send Discord notification: {e}")
+        logger.error(f"Failed to send Discord notification: {e}")
 
 def process_directory(ftp, current_path, cutoff_date, deleted_files):
     """Recursively process directories and delete old files"""
@@ -79,11 +91,11 @@ def process_directory(ftp, current_path, cutoff_date, deleted_files):
                 
                 # Check if file is older than cutoff date
                 if mod_time < cutoff_date:
-                    print(f"Deleting file: {full_path} (modified: {mod_time})")
+                    logger.info(f"Deleting file: {full_path} (modified: {mod_time})")
                     ftp.delete(item_name)
                     deleted_files.append(full_path)
             except Exception as e:
-                print(f"Error processing file {item_name}: {e}")
+                logger.error(f"Error processing file {item_name}: {e}")
     
     # Second pass: Process subdirectories recursively
     subdirs_to_check = []
@@ -105,7 +117,7 @@ def process_directory(ftp, current_path, cutoff_date, deleted_files):
             # Navigate into subdirectory
             ftp.cwd(subdir)
             subdir_path = f"{current_path}/{subdir}" if current_path else subdir
-            print(f"Processing directory: {subdir_path}")
+            logger.info(f"Processing directory: {subdir_path}")
             
             # Process the subdirectory
             process_directory(ftp, subdir_path, cutoff_date, deleted_files)
@@ -121,21 +133,21 @@ def process_directory(ftp, current_path, cutoff_date, deleted_files):
             if not actual_items:
                 # Go back to parent directory before deleting
                 ftp.cwd('..')
-                print(f"Deleting empty directory: {subdir_path}")
+                logger.info(f"Deleting empty directory: {subdir_path}")
                 ftp.rmd(subdir)
                 deleted_files.append(f"{subdir_path}/ (empty directory)")
             else:
                 # Just go back to parent directory
                 ftp.cwd('..')
         except Exception as e:
-            print(f"Error processing directory {subdir}: {e}")
+            logger.error(f"Error processing directory {subdir}: {e}")
             # Try to go back to parent directory
             try:
                 ftp.cwd('..')
             except:
                 pass
 
-def main():
+def purge_ftp():
     # Calculate the cutoff date
     cutoff_date = datetime.now() - timedelta(days=DAYS_TO_KEEP)
     deleted_files = []
@@ -159,14 +171,30 @@ def main():
         # Send Discord notification
         send_discord_notification(deleted_files)
         
-        print(f"Purge complete. {len(deleted_files)} items deleted.")
+        logger.info(f"Purge complete. {len(deleted_files)} items deleted.")
         
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
         # Try to send notification about the error
-        requests.post(DISCORD_WEBHOOK_URL, json={
-            "content": f"❌ **Error during FTP purge**: {str(e)}"
-        })
+        try:
+            requests.post(DISCORD_WEBHOOK_URL, json={
+                "content": f"❌ **Error during FTP purge**: {str(e)}"
+            })
+        except:
+            pass
+
+def main():
+    logger.info("FTP Purge service started")
+    
+    while True:
+        logger.info("Starting FTP purge cycle")
+        purge_ftp()
+        
+        next_run = datetime.now() + timedelta(seconds=SLEEP_TIME)
+        logger.info(f"Next purge scheduled at: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Sleep for 24 hours
+        time.sleep(SLEEP_TIME)
 
 if __name__ == "__main__":
     main()
