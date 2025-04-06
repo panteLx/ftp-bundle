@@ -29,7 +29,8 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 DAYS_TO_KEEP = int(os.getenv("DAYS_TO_KEEP"))
 
 # Sleep time in seconds (24 hours = 86400 seconds)
-SLEEP_TIME = int(os.getenv("SLEEP_TIME"))
+FTP_PURGE_INTERVAL = int(os.getenv("FTP_PURGE_INTERVAL"))
+HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL"))
 
 def send_discord_notification(deleted_files):
     """Send notification to Discord about deleted files"""
@@ -183,18 +184,90 @@ def purge_ftp():
         except:
             pass
 
+def check_ftp_health():
+    """Check if FTP server is reachable and responding"""
+    try:
+        # Connect to FTP server
+        ftp = ftplib.FTP(FTP_HOST)
+        ftp.login(FTP_USER, FTP_PASS)
+        
+        # Try to get current directory to verify connection
+        ftp.pwd()
+        
+        # Close connection
+        ftp.quit()
+        
+        # Send success notification
+        try:
+            requests.post(DISCORD_WEBHOOK_URL, json={
+                "content": "✅ **FTP Server Health Check**: Server is reachable and responding",
+                "embeds": [{
+                    "title": "Health Check Status",
+                    "description": "FTP server is operational",
+                    "color": 3066993,  # Green color
+                    "timestamp": datetime.now().isoformat()
+                }]
+            })
+        except Exception as e:
+            logger.error(f"Failed to send health check notification: {e}")
+            
+        logger.info("FTP health check successful")
+        return True
+        
+    except Exception as e:
+        # Send failure notification
+        try:
+            requests.post(DISCORD_WEBHOOK_URL, json={
+                "content": f"❌ **FTP Server Health Check Failed**: {str(e)}",
+                "embeds": [{
+                    "title": "Health Check Status",
+                    "description": f"FTP server is not responding: {str(e)}",
+                    "color": 15158332,  # Red color
+                    "timestamp": datetime.now().isoformat()
+                }]
+            })
+        except Exception as notif_error:
+            logger.error(f"Failed to send health check notification: {notif_error}")
+            
+        logger.error(f"FTP health check failed: {e}")
+        return False
+
 def main():
-    logger.info("FTP Purge service started")
+    logger.info("FTP Purge service and health check started")
+
+    # Initialize last health check and purge times
+    last_health_check = datetime.now()
+    last_purge = datetime.now()
+
+    # Calculate next health check and purge times
+    next_health_check = last_health_check + timedelta(seconds=HEALTH_CHECK_INTERVAL)
+    next_purge = last_purge + timedelta(seconds=FTP_PURGE_INTERVAL)
+
+    logger.info(f"Next health check scheduled at: {next_health_check.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Next purge scheduled at: {next_purge.strftime('%Y-%m-%d %H:%M:%S')}")
+
     
     while True:
-        logger.info("Starting FTP purge cycle")
-        purge_ftp()
+        current_time = datetime.now()
         
-        next_run = datetime.now() + timedelta(seconds=SLEEP_TIME)
-        logger.info(f"Next purge scheduled at: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+        # Check if it's time for a health check
+        if (current_time - last_health_check).total_seconds() >= HEALTH_CHECK_INTERVAL:
+            logger.info("Starting FTP health check cycle")
+            check_ftp_health()
+            last_health_check = current_time
+            next_health_check = current_time + timedelta(seconds=HEALTH_CHECK_INTERVAL)
+            logger.info(f"Next health check scheduled at: {next_health_check.strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Sleep for 24 hours
-        time.sleep(SLEEP_TIME)
+        # Check if it's time for a purge
+        if (current_time - last_purge).total_seconds() >= FTP_PURGE_INTERVAL:
+            logger.info("Starting FTP purge cycle")
+            purge_ftp()
+            last_purge = current_time
+            next_purge = current_time + timedelta(seconds=FTP_PURGE_INTERVAL)
+            logger.info(f"Next purge scheduled at: {next_purge.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Sleep for 1 second before checking again
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
