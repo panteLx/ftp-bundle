@@ -6,31 +6,83 @@ import time
 import logging
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from logging.handlers import RotatingFileHandler
+import ssl
+from typing import List, Optional
+import concurrent.futures
+from functools import wraps
+import sys
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger('ftp-purge')
+# Set up logging with rotation
+def setup_logging():
+    log_dir = "logs"
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    log_file = os.path.join(log_dir, "ftp-purge.log")
+    handler = RotatingFileHandler(log_file, maxBytes=10485760, backupCount=5)  # 10MB per file, keep 5 backups
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    
+    logger = logging.getLogger('ftp-purge')
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    
+    # Also log to console
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    return logger
 
+logger = setup_logging()
+
+# Load environment variables
 load_dotenv()
 
-# FTP server configuration
-FTP_HOST = os.getenv("FTP_HOST")
-FTP_USER = os.getenv("FTP_USER")
-FTP_PASS = os.getenv("FTP_PASS")
-FTP_DIR = os.getenv("FTP_DIR")
+# Validate environment variables
+def validate_env_vars():
+    required_vars = [
+        "FTP_HOST", "FTP_USER", "FTP_PASS", "FTP_DIR",
+        "DAYS_TO_KEEP", "DISCORD_WEBHOOK_URL",
+        "FTP_PURGE_INTERVAL", "HEALTH_CHECK_INTERVAL"
+    ]
+    
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-# Discord webhook URL
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+# FTP server configuration with validation
+try:
+    validate_env_vars()
+    FTP_HOST = os.getenv("FTP_HOST")
+    FTP_USER = os.getenv("FTP_USER")
+    FTP_PASS = os.getenv("FTP_PASS")
+    FTP_DIR = os.getenv("FTP_DIR")
+    DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+    DAYS_TO_KEEP = int(os.getenv("DAYS_TO_KEEP"))
+    FTP_PURGE_INTERVAL = int(os.getenv("FTP_PURGE_INTERVAL"))
+    HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL"))
+except Exception as e:
+    logger.error(f"Configuration error: {e}")
+    sys.exit(1)
 
-# Number of days to keep files (delete older files)
-DAYS_TO_KEEP = int(os.getenv("DAYS_TO_KEEP"))
-
-# Sleep time in seconds (24 hours = 86400 seconds)
-FTP_PURGE_INTERVAL = int(os.getenv("FTP_PURGE_INTERVAL"))
-HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL"))
+# Retry decorator for FTP operations
+def retry_on_failure(max_retries=3, delay=5):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Operation failed after {max_retries} attempts: {e}")
+                        raise
+                    logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {delay} seconds...")
+                    time.sleep(delay)
+        return wrapper
+    return decorator
 
 def send_discord_notification(deleted_files):
     """Send notification to Discord about deleted files"""
@@ -62,91 +114,101 @@ def send_discord_notification(deleted_files):
     except Exception as e:
         logger.error(f"Failed to send Discord notification: {e}")
 
-def process_directory(ftp, current_path, cutoff_date, deleted_files):
-    """Recursively process directories and delete old files"""
-    # Get list of files and directories
-    file_list = []
-    ftp.dir(file_list.append)
-    
-    # First pass: Process files
-    for file_info in file_list:
-        # Parse the file information
-        parts = file_info.split(None, 8)
-        if len(parts) < 9:
-            continue
-            
-        item_type = parts[0][0]
-        item_name = parts[8]
-        
-        # Skip directories in this pass
-        if item_type == 'd' and item_name not in ['.', '..']:
-            continue
-            
-        # Process regular files
-        if item_type == '-':
-            try:
-                # Get file modification time
-                full_path = f"{current_path}/{item_name}" if current_path else item_name
-                mod_time_str = ftp.sendcmd(f"MDTM {item_name}")[4:]
-                mod_time = datetime.strptime(mod_time_str, "%Y%m%d%H%M%S")
-                
-                # Check if file is older than cutoff date
-                if mod_time < cutoff_date:
-                    logger.info(f"Deleting file: {full_path} (modified: {mod_time})")
-                    ftp.delete(item_name)
-                    deleted_files.append(full_path)
-            except Exception as e:
-                logger.error(f"Error processing file {item_name}: {e}")
-    
-    # Second pass: Process subdirectories recursively
-    subdirs_to_check = []
-    for file_info in file_list:
-        parts = file_info.split(None, 8)
-        if len(parts) < 9:
-            continue
-            
-        item_type = parts[0][0]
-        item_name = parts[8]
-        
-        # Process directories (but skip . and ..)
-        if item_type == 'd' and item_name not in ['.', '..']:
-            subdirs_to_check.append(item_name)
-    
-    # Process each subdirectory
-    for subdir in subdirs_to_check:
+def create_ftp_connection() -> ftplib.FTP:
+    """Create a secure FTP connection with retry logic"""
+    try:
+        # Try to use secure connection first
         try:
-            # Navigate into subdirectory
-            ftp.cwd(subdir)
-            subdir_path = f"{current_path}/{subdir}" if current_path else subdir
-            logger.info(f"Processing directory: {subdir_path}")
+            ftp = ftplib.FTP_TLS(FTP_HOST)
+            ftp.login(FTP_USER, FTP_PASS)
+            ftp.prot_p()  # Switch to secure data connection
+            logger.info("Established secure FTP connection")
+        except:
+            # Fall back to regular FTP if secure connection fails
+            ftp = ftplib.FTP(FTP_HOST)
+            ftp.login(FTP_USER, FTP_PASS)
+            logger.info("Established regular FTP connection")
+        return ftp
+    except Exception as e:
+        logger.error(f"Failed to establish FTP connection: {e}")
+        raise
+
+@retry_on_failure()
+def process_directory(ftp: ftplib.FTP, current_path: str, cutoff_date: datetime, deleted_files: List[str]) -> None:
+    """Recursively process directories and delete old files with improved error handling"""
+    try:
+        # Get list of files and directories
+        file_list = []
+        ftp.dir(file_list.append)
+        
+        # Process files in parallel using thread pool
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for file_info in file_list:
+                parts = file_info.split(None, 8)
+                if len(parts) < 9:
+                    continue
+                    
+                item_type = parts[0][0]
+                item_name = parts[8]
+                
+                if item_type == '-':  # Regular file
+                    futures.append(
+                        executor.submit(process_file, ftp, current_path, item_name, cutoff_date, deleted_files)
+                    )
+                elif item_type == 'd' and item_name not in ['.', '..']:  # Directory
+                    futures.append(
+                        executor.submit(process_subdirectory, ftp, current_path, item_name, cutoff_date, deleted_files)
+                    )
             
-            # Process the subdirectory
-            process_directory(ftp, subdir_path, cutoff_date, deleted_files)
+            # Wait for all tasks to complete
+            concurrent.futures.wait(futures)
             
-            # Check if directory is empty
-            dir_list = []
-            ftp.dir(dir_list.append)
-            
-            # Only count actual items (not . and ..)
-            actual_items = [item for item in dir_list if item.split(None, 8)[-1] not in ['.', '..']]
-            
-            # If empty, delete the directory
-            if not actual_items:
-                # Go back to parent directory before deleting
-                ftp.cwd('..')
-                logger.info(f"Deleting empty directory: {subdir_path}")
-                ftp.rmd(subdir)
-                deleted_files.append(f"{subdir_path}/ (empty directory)")
-            else:
-                # Just go back to parent directory
-                ftp.cwd('..')
-        except Exception as e:
-            logger.error(f"Error processing directory {subdir}: {e}")
-            # Try to go back to parent directory
-            try:
-                ftp.cwd('..')
-            except:
-                pass
+    except Exception as e:
+        logger.error(f"Error processing directory {current_path}: {e}")
+        raise
+
+def process_file(ftp: ftplib.FTP, current_path: str, file_name: str, cutoff_date: datetime, deleted_files: List[str]) -> None:
+    """Process a single file"""
+    try:
+        full_path = f"{current_path}/{file_name}" if current_path else file_name
+        mod_time_str = ftp.sendcmd(f"MDTM {file_name}")[4:]
+        mod_time = datetime.strptime(mod_time_str, "%Y%m%d%H%M%S")
+        
+        if mod_time < cutoff_date:
+            logger.info(f"Deleting file: {full_path} (modified: {mod_time})")
+            ftp.delete(file_name)
+            deleted_files.append(full_path)
+    except Exception as e:
+        logger.error(f"Error processing file {file_name}: {e}")
+
+def process_subdirectory(ftp: ftplib.FTP, current_path: str, dir_name: str, cutoff_date: datetime, deleted_files: List[str]) -> None:
+    """Process a subdirectory"""
+    try:
+        ftp.cwd(dir_name)
+        subdir_path = f"{current_path}/{dir_name}" if current_path else dir_name
+        logger.info(f"Processing directory: {subdir_path}")
+        
+        process_directory(ftp, subdir_path, cutoff_date, deleted_files)
+        
+        # Check if directory is empty
+        dir_list = []
+        ftp.dir(dir_list.append)
+        actual_items = [item for item in dir_list if item.split(None, 8)[-1] not in ['.', '..']]
+        
+        if not actual_items:
+            ftp.cwd('..')
+            logger.info(f"Deleting empty directory: {subdir_path}")
+            ftp.rmd(dir_name)
+            deleted_files.append(f"{subdir_path}/ (empty directory)")
+        else:
+            ftp.cwd('..')
+    except Exception as e:
+        logger.error(f"Error processing directory {dir_name}: {e}")
+        try:
+            ftp.cwd('..')
+        except:
+            pass
 
 def purge_ftp():
     # Calculate the cutoff date
@@ -155,8 +217,7 @@ def purge_ftp():
     
     try:
         # Connect to FTP server
-        ftp = ftplib.FTP(FTP_HOST)
-        ftp.login(FTP_USER, FTP_PASS)
+        ftp = create_ftp_connection()
         
         # Change to the specified directory
         if FTP_DIR and FTP_DIR != '/':
@@ -188,8 +249,7 @@ def check_ftp_health():
     """Check if FTP server is reachable and responding"""
     try:
         # Connect to FTP server
-        ftp = ftplib.FTP(FTP_HOST)
-        ftp.login(FTP_USER, FTP_PASS)
+        ftp = create_ftp_connection()
         
         # Try to get current directory to verify connection
         ftp.pwd()

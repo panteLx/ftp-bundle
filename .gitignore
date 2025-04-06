@@ -1,1 +1,2 @@
 .env
+ftp-purge-data/logs/*
