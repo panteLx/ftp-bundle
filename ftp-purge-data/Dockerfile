@@ -36,9 +36,6 @@ RUN apt-get update && \
 # Copy application code
 COPY . .
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD python -c "import requests; print('Health check passed')" || exit 1
 
 # Run app
 CMD ["python", "purge.py"]
