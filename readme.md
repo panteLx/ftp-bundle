@@ -1,6 +1,6 @@
-# FTP Purge
+# FTP Purge + FTP Server + Home Gallery Server
 
-This is a simple script to purge files from an FTP server and send a notification to a Discord webhook. It also checks the heath status of the FTP server.
+This is a simple script to purge files from an FTP server and send a notification to a Discord webhook. It also checks the heath status of the FTP server. It hosts the FTP server and the Home Gallery aswell.
 
 ## Requirements
 
@@ -13,16 +13,20 @@ This is a simple script to purge files from an FTP server and send a notificatio
 ```bash
 git clone https://github.com/pantelx/ftp-purge.git
 cd ftp-purge
-cp .env.example .env
+cp docker-compose.yml.example docker-compose.yml
+
+mkdir -p gallery-data/config
+echo "CURRENT_USER=$(id -u):$(id -g)" >> .env
+docker compose run gallery run init --source /data/Pictures
 ```
 
-Edit the `.env` file with your own values.
+Edit the `gallery-data/config/gallery.config.yml` file with your own values.
 
 ```bash
 docker compose up --build
 ```
 
-## Environment Variables
+## FTP Purge Environment Variables
 
 - FTP_HOST: The host of the FTP server
 - FTP_USER: The username for the FTP server

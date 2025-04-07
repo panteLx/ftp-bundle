@@ -12,6 +12,7 @@ from typing import List, Optional
 import concurrent.futures
 from functools import wraps
 import sys
+import docker
 
 # Set up logging with rotation
 def setup_logging():
@@ -248,48 +249,40 @@ def purge_ftp():
 def check_ftp_health():
     """Check if FTP server is reachable and responding"""
     try:
-        # Connect to FTP server
+        # Try to connect to FTP server
         ftp = create_ftp_connection()
-        
-        # Try to get current directory to verify connection
-        ftp.pwd()
-        
-        # Close connection
         ftp.quit()
-        
-        # Send success notification
-        try:
-            requests.post(DISCORD_WEBHOOK_URL, json={
-                "content": "✅ **FTP Server Health Check**: Server is reachable and responding",
-                "embeds": [{
-                    "title": "Health Check Status",
-                    "description": "FTP server is operational",
-                    "color": 3066993,  # Green color
-                    "timestamp": datetime.now().isoformat()
-                }]
-            })
-        except Exception as e:
-            logger.error(f"Failed to send health check notification: {e}")
-            
-        logger.info("FTP health check successful")
+        logger.info("FTP health check passed")
         return True
-        
     except Exception as e:
-        # Send failure notification
-        try:
-            requests.post(DISCORD_WEBHOOK_URL, json={
-                "content": f"❌ **FTP Server Health Check Failed**: {str(e)}",
-                "embeds": [{
-                    "title": "Health Check Status",
-                    "description": f"FTP server is not responding: {str(e)}",
-                    "color": 15158332,  # Red color
-                    "timestamp": datetime.now().isoformat()
-                }]
-            })
-        except Exception as notif_error:
-            logger.error(f"Failed to send health check notification: {notif_error}")
-            
         logger.error(f"FTP health check failed: {e}")
+        try:
+            # Initialize Docker client
+            client = docker.from_env()
+            
+            # Get the FTP server container
+            container = client.containers.get('ftp-server')
+            
+            # Restart the container
+            container.restart()
+            logger.info("FTP server container restarted successfully")
+            
+            # Send Discord notification about the restart
+            try:
+                requests.post(DISCORD_WEBHOOK_URL, json={
+                    "content": f"🔄 **FTP Server Restarted**: The FTP server was restarted due to a failed health check. Error: {str(e)}"
+                })
+            except:
+                pass
+        except Exception as docker_error:
+            logger.error(f"Failed to restart FTP server container: {docker_error}")
+            # Try to send notification about the restart failure
+            try:
+                requests.post(DISCORD_WEBHOOK_URL, json={
+                    "content": f"❌ **FTP Server Restart Failed**: Could not restart the FTP server container. Error: {str(docker_error)}"
+                })
+            except:
+                pass
         return False
 
 def main():
