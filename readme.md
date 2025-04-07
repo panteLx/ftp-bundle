@@ -1,4 +1,4 @@
-# FTP Purge + FTP Server + Home Gallery Server
+# FTP Bundle - FTP Purge + FTP Server + Home Gallery Server
 
 This is a simple script to purge files from an FTP server and send a notification to a Discord webhook. It also checks the heath status of the FTP server. It hosts the FTP server and the Home Gallery aswell.
 
@@ -11,8 +11,8 @@ This is a simple script to purge files from an FTP server and send a notificatio
 ## Installation
 
 ```bash
-git clone https://github.com/pantelx/ftp-purge.git
-cd ftp-purge
+git clone https://github.com/pantelx/ftp-bundle.git
+cd ftp-bundle
 cp example_docker-compose.yml docker-compose.yml
 
 mkdir -p gallery-data/config
