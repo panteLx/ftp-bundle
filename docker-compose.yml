@@ -1,8 +1,0 @@
-services:
-  ftp-purge:
-    restart: unless-stopped
-    build: ./ftp-purge-data
-    volumes:
-      - ./ftp-purge-data:/app
-    env_file:
-      - .env
