@@ -13,7 +13,7 @@ This is a simple script to purge files from an FTP server and send a notificatio
 ```bash
 git clone https://github.com/pantelx/ftp-purge.git
 cd ftp-purge
-cp docker-compose.yml.example docker-compose.yml
+cp example_docker-compose.yml docker-compose.yml
 
 mkdir -p gallery-data/config
 echo "CURRENT_USER=$(id -u):$(id -g)" >> .env

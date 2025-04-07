@@ -1,4 +1,4 @@
 docker-compose.yml
 .env
-ftp-purge-data/logs/*
+ftp-purge-data/logs/
 gallery-data

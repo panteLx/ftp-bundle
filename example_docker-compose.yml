@@ -3,28 +3,35 @@ services:
     container_name: ftp-purge
     restart: unless-stopped
     build: ./ftp-purge-data
+    user: root
     volumes:
       - ./ftp-purge-data:/app
       - /var/run/docker.sock:/var/run/docker.sock
-
     environment:
-      - FTP_HOST=192.168.178.676
+      - FTP_HOST=ftp.example.com
       - FTP_USER=user
-      - FTP_PASS=twvev8BqckYKgq
+      - FTP_PASS=password
       - FTP_DIR=/
-      - DAYS_TO_KEEP=10
-      - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/1357376816817508475/iryR00rB40IOcZAVVFHaLyNcLM0MN4NFs4SXG4Z8YKezhaNVC_9q19NEea7Mu7NzbOm6
-      - FTP_PURGE_INTERVAL=60
-      - HEALTH_CHECK_INTERVAL=30
+      - DAYS_TO_KEEP=0
+      - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/xxx
+      - FTP_PURGE_INTERVAL=30
+      - HEALTH_CHECK_INTERVAL=60
     networks:
       - gallery-network
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import requests; print('Health check passed')"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   ftp-server:
     container_name: ftp-server
     restart: unless-stopped
     environment:
-      - PUBLIC_IP=192.168.178.67
-      - FTP_PASS=twvev8BqckYKgq
+      - PUBLIC_IP=ftp.example.com
+      - FTP_PASS=password
       - FTP_USER=user
     image: garethflowers/ftp-server
     ports:
@@ -34,50 +41,49 @@ services:
       - "ftp-data:/home/user"
     networks:
       - gallery-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "21"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       - ftp-purge
 
   gallery:
     container_name: gallery
     restart: unless-stopped
-
     image: xemle/home-gallery
-
     environment:
       - GALLERY_API_SERVER=https://api.home-gallery.org
-
       - GALLERY_API_SERVER_CONCURRENT=5 # for SoC devices like Rasperry Pi. Use 5 otherwise
-
       - GALLERY_API_SERVER_TIMEOUT=30 # for SoC devices like Rasperry Pi. Use 30 otherwise
-
       #- GALLERY_USE_NATIVE=ffprobe,ffmpeg,vipsthumbnail # On issues with sharp resizer
-
       - GALLERY_OPEN_BROWSER=false
-
       # Use polling for safety of possible network mounts. Try 0 to use inotify via fs.watch
-
       - GALLERY_WATCH_POLL_INTERVAL=5
-
     volumes:
       - ./gallery-data:/data
-
       - ftp-data:/data/Pictures
-
     ports:
       - "3000:3000"
-
     user: "${CURRENT_USER}"
-
     entrypoint: ["node", "/app/gallery.js"]
-
     command: ["run", "server"]
-
     networks:
       - gallery-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 networks:
   gallery-network:
     driver: bridge
+    name: gallery-network
 
 volumes:
   ftp-data:
+    name: ftp-data
