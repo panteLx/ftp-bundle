@@ -8,31 +8,24 @@ services:
       - ./ftp-purge-data:/app
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - FTP_HOST=ftp.example.com
-      - FTP_USER=user
-      - FTP_PASS=password
+      - FTP_HOST=ftp_host
+      - FTP_USER=ftp_user
+      - FTP_PASS=ftp_password
       - FTP_DIR=/
-      - DAYS_TO_KEEP=0
-      - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/xxx
-      - FTP_PURGE_INTERVAL=30
-      - HEALTH_CHECK_INTERVAL=60
+      - DAYS_TO_KEEP=14
+      - DISCORD_WEBHOOK_URL=discord_webhook_url
+      - FTP_PURGE_INTERVAL=86400
+      - HEALTH_CHECK_INTERVAL=300
     networks:
-      - gallery-network
-    healthcheck:
-      test:
-        ["CMD", "python", "-c", "import requests; print('Health check passed')"]
-      interval: 1m
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      - ftp-network
 
   ftp-server:
     container_name: ftp-server
     restart: unless-stopped
     environment:
-      - PUBLIC_IP=ftp.example.com
-      - FTP_PASS=password
-      - FTP_USER=user
+      - PUBLIC_IP=ftp_host
+      - FTP_PASS=ftp_password
+      - FTP_USER=ftp_user
     image: garethflowers/ftp-server
     ports:
       - "20-21:20-21/tcp"
@@ -40,49 +33,15 @@ services:
     volumes:
       - "ftp-data:/home/user"
     networks:
-      - gallery-network
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "21"]
-      interval: 1m
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      - ftp-network
+
     depends_on:
       - ftp-purge
 
-  gallery:
-    container_name: gallery
-    restart: unless-stopped
-    image: xemle/home-gallery
-    environment:
-      - GALLERY_API_SERVER=https://api.home-gallery.org
-      - GALLERY_API_SERVER_CONCURRENT=5 # for SoC devices like Rasperry Pi. Use 5 otherwise
-      - GALLERY_API_SERVER_TIMEOUT=30 # for SoC devices like Rasperry Pi. Use 30 otherwise
-      #- GALLERY_USE_NATIVE=ffprobe,ffmpeg,vipsthumbnail # On issues with sharp resizer
-      - GALLERY_OPEN_BROWSER=false
-      # Use polling for safety of possible network mounts. Try 0 to use inotify via fs.watch
-      - GALLERY_WATCH_POLL_INTERVAL=5
-    volumes:
-      - ./gallery-data:/data
-      - ftp-data:/data/Pictures
-    ports:
-      - "3000:3000"
-    user: "${CURRENT_USER}"
-    entrypoint: ["node", "/app/gallery.js"]
-    command: ["run", "server"]
-    networks:
-      - gallery-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 1m
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
 networks:
-  gallery-network:
+  ftp-network:
     driver: bridge
-    name: gallery-network
+    name: ftp-network
 
 volumes:
   ftp-data:
