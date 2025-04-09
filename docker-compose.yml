@@ -2,39 +2,32 @@ services:
   ftp-purge:
     container_name: ftp-purge
     restart: unless-stopped
-    build: ./ftp-purge-data
+    build:
+      context: ./ftp-purge-data
+      dockerfile: Dockerfile
     user: root
     volumes:
       - ./ftp-purge-data:/app
       - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - FTP_HOST=ftp_host
-      - FTP_USER=ftp_user
-      - FTP_PASS=ftp_password
-      - FTP_DIR=/
-      - DAYS_TO_KEEP=14
-      - DISCORD_WEBHOOK_URL=discord_webhook_url
-      - FTP_PURGE_INTERVAL=86400
-      - HEALTH_CHECK_INTERVAL=300
+      - ftp-data:/ftp-data
+    env_file:
+      - .env
     networks:
       - ftp-network
 
   ftp-server:
     container_name: ftp-server
     restart: unless-stopped
-    environment:
-      - PUBLIC_IP=ftp_host
-      - FTP_PASS=ftp_password
-      - FTP_USER=ftp_user
     image: garethflowers/ftp-server
+    env_file:
+      - .env
     ports:
-      - "20-21:20-21/tcp"
-      - "40000-40009:40000-40009/tcp" # For passive mode
+      - "${FTP_PASV_MIN_PORT:-40000}-${FTP_PASV_MAX_PORT:-40009}:40000-40009/tcp" # Passive mode ports
+      - "${FTP_PORT:-21}:21/tcp" # FTP control port
     volumes:
-      - "ftp-data:/home/user"
+      - ftp-data:/home/user
     networks:
       - ftp-network
-
     depends_on:
       - ftp-purge
 
